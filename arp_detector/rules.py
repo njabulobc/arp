@@ -72,8 +72,8 @@ class DecisionLogic:
         self.thresholds = thresholds
 
     def process(self, packet: ParsedARPPacket) -> Optional[DetectionEvent]:
-        binding = self.cache.update(packet.sender_ip, packet.sender_mac)
         reasons = self.rules.evaluate(packet)
+        binding = self.cache.update(packet.sender_ip, packet.sender_mac)
         if not reasons:
             return None
 
