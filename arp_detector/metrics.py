@@ -1,10 +1,11 @@
 """Metrics collection for ARP monitoring."""
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from statistics import mean
-from typing import List, Optional
+from typing import Deque, List, Optional
 
 from .parser import ParsedARPPacket
 
@@ -28,6 +29,9 @@ class ResourceSnapshot:
     bandwidth_bytes_per_sec: float
 
 
+MAX_RESOURCE_SAMPLES = 512
+
+
 @dataclass
 class Metrics:
     """Aggregates operational and effectiveness metrics."""
@@ -39,7 +43,9 @@ class Metrics:
     false_positive: int = 0
     true_negative: int = 0
     false_negative: int = 0
-    _resource_samples: List[ResourceSnapshot] = field(default_factory=list)
+    _resource_samples: Deque[ResourceSnapshot] = field(
+        default_factory=lambda: deque(maxlen=MAX_RESOURCE_SAMPLES)
+    )
 
     def record_packet(self, packet: ParsedARPPacket, snapshot: Optional[ResourceSnapshot] = None) -> None:
         """Register that a packet has been processed."""

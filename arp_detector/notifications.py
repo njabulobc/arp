@@ -1,12 +1,16 @@
 """Notification management for ARP detector alerts."""
 from __future__ import annotations
 
+import logging
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Callable, Iterable, List, Optional
 
 from .rules import DetectionEvent
+
+
+logger = logging.getLogger(__name__)
 
 
 ALERT_LEVELS = ["info", "warning", "critical"]
@@ -65,7 +69,10 @@ class NotificationManager:
             f"[{level.upper()}] ARP alert for {event.packet.sender_ip} -> {event.packet.target_ip}: {event.reason}"
         )
         for channel in self._channels:
-            channel.notify(event, level, message)
+            try:
+                channel.notify(event, level, message)
+            except Exception:  # pragma: no cover - defensive logging path
+                logger.exception("Notification channel '%s' failed", channel.name)
 
     def _determine_level(self, event: DetectionEvent) -> str:
         if event.occurrences >= self.policy.critical_threshold or event.severity == "high":
