@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from scapy.layers.l2 import ARP
+from scapy.layers.l2 import ARP, Dot1Q
 from scapy.packet import Packet
 
 
@@ -18,6 +18,7 @@ class ParsedARPPacket:
     sender_mac: str
     target_ip: str
     target_mac: str
+    vlan: Optional[int]
     timestamp: datetime
     raw: Dict[str, Any]
     is_attack: Optional[bool] = None
@@ -33,6 +34,12 @@ class PacketParser:
             raise ValueError("Packet is not an ARP frame")
 
         arp_layer: ARP = packet[ARP]
+        vlan: Optional[int] = None
+        if packet.haslayer(Dot1Q):
+            try:
+                vlan = int(packet[Dot1Q].vlan)
+            except Exception:  # noqa: BLE001 - malformed VLAN header should not break parsing
+                vlan = None
         operation = "request" if arp_layer.op == 1 else "reply" if arp_layer.op == 2 else str(arp_layer.op)
         return ParsedARPPacket(
             operation=operation,
@@ -40,6 +47,7 @@ class PacketParser:
             sender_mac=arp_layer.hwsrc,
             target_ip=arp_layer.pdst,
             target_mac=arp_layer.hwdst,
+            vlan=vlan,
             timestamp=datetime.utcnow(),
             raw={
                 "hwtype": arp_layer.hwtype,
@@ -47,5 +55,6 @@ class PacketParser:
                 "hwlen": arp_layer.hwlen,
                 "plen": arp_layer.plen,
                 "op": arp_layer.op,
+                "vlan": vlan,
             },
         )
