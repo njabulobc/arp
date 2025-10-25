@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  arp-monitor:
+    build:
+      context: .
+    image: arp-monitor:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      MONITOR_INTERFACE: ${MONITOR_INTERFACE:-}
+      MONITOR_WINDOW: ${MONITOR_WINDOW:-120}
+      MONITOR_DETECT_THRESHOLD: ${MONITOR_DETECT_THRESHOLD:-2}
+      MONITOR_HIGH_THRESHOLD: ${MONITOR_HIGH_THRESHOLD:-3}
+      MONITOR_WARN_ALERT: ${MONITOR_WARN_ALERT:-1}
+      MONITOR_CRITICAL_ALERT: ${MONITOR_CRITICAL_ALERT:-3}
+      DISABLE_TELEMETRY: ${DISABLE_TELEMETRY:-0}
+      SIMULATE_TRAFFIC: ${SIMULATE_TRAFFIC:-0}
+      ARP_MONITOR_LOG_DIR: /app/logs
+      ARP_MONITOR_STATE_DIR: /app/state
+    volumes:
+      - ./logs:/app/logs
+      - ./state:/app/state
