@@ -1,0 +1,8 @@
+# Locked dependency set for production deployments.
+# Generated via tools/generate_lock.py; regenerate after updating requirements.txt.
+PyQt5==5.15.10 \
+    --hash=sha256:TODO_REPLACE_WITH_REAL_HASH
+scapy==2.5.0 \
+    --hash=sha256:TODO_REPLACE_WITH_REAL_HASH
+psutil==5.9.8 \
+    --hash=sha256:TODO_REPLACE_WITH_REAL_HASH

@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
 )
 
 from arp_detector.mitigation import MitigationAction, MitigationEngine
-from arp_detector.monitor import ARPMonitor, MonitorConfig
+from arp_detector.monitor import ARPMonitor, MonitorConfig, MonitorConfigurationError
 from arp_detector.notifications import NotificationManager, NotificationPolicy, create_callback_channel
 from arp_detector.reporting import ReportGenerator
 from arp_detector.rules import DetectionEvent
@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
     def _register_notifications(self) -> None:
         self.notification_manager.clear_channels()
 
-        def _popup(event: DetectionEvent, level: str, message: str) -> None:
+        def _popup(event: DetectionEvent, level: str, message: str, structured: dict[str, object]) -> None:
             QMessageBox.warning(self, f"ARP {level.title()} Alert", message)
 
         self.notification_manager.register_channel(
@@ -269,7 +269,11 @@ class MainWindow(QMainWindow):
             alert_warning_threshold=warning_alert,
             alert_critical_threshold=critical_alert,
         )
-        self.monitor.configure(config)
+        try:
+            self.monitor.configure(config)
+        except MonitorConfigurationError as exc:
+            QMessageBox.critical(self, "Configuration Error", str(exc))
+            return
         self.notification_manager.configure(
             NotificationPolicy(
                 warning_threshold=warning_alert,

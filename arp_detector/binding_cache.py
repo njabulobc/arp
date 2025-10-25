@@ -35,6 +35,11 @@ class BindingCache:
         self._entries: Dict[str, BindingEntry] = {}
         self.retention = timedelta(seconds=retention_seconds)
 
+    def clear(self) -> None:
+        """Remove all cached bindings."""
+
+        self._entries.clear()
+
     def get(self, ip_address: str) -> Optional[BindingEntry]:
         return self._entries.get(ip_address)
 
