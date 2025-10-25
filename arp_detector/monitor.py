@@ -11,6 +11,8 @@ from scapy.layers.l2 import ARP
 from .binding_cache import BindingCache
 from .event_logger import EventLogger
 from .metrics import IncidentRecord, Metrics
+from .notifications import NotificationManager, NotificationPolicy
+from .resource_monitor import ResourceMonitor
 from .parser import PacketParser, ParsedARPPacket
 from .rules import DecisionLogic, DetectionEvent, RuleMatchingModule, ThresholdEvaluator
 
@@ -19,7 +21,10 @@ from .rules import DecisionLogic, DetectionEvent, RuleMatchingModule, ThresholdE
 class MonitorConfig:
     interface: Optional[str]
     window_seconds: int
-    trigger_threshold: int
+    detection_threshold: int
+    high_severity_threshold: int
+    alert_warning_threshold: int = 1
+    alert_critical_threshold: int = 3
 
 
 class ARPMonitor(QObject):
@@ -37,6 +42,8 @@ class ARPMonitor(QObject):
         self.thresholds = ThresholdEvaluator()
         self.rules = RuleMatchingModule(self.cache)
         self.decision = DecisionLogic(self.cache, self.rules, self.thresholds)
+        self.resources = ResourceMonitor()
+        self.notifications: Optional[NotificationManager] = None
         self.sniffer: Optional[AsyncSniffer] = None
         self._config: Optional[MonitorConfig] = None
 
@@ -45,10 +52,24 @@ class ARPMonitor(QObject):
 
     def configure(self, config: MonitorConfig) -> None:
         self._config = config
-        self.thresholds = ThresholdEvaluator(config.window_seconds, config.trigger_threshold)
+        self.thresholds = ThresholdEvaluator(
+            window_seconds=config.window_seconds,
+            detection_trigger=config.detection_threshold,
+            high_trigger=config.high_severity_threshold,
+        )
         self.decision = DecisionLogic(self.cache, self.rules, self.thresholds)
+        self.resources.set_interface(config.interface)
+        if self.notifications:
+            policy = NotificationPolicy(
+                warning_threshold=config.alert_warning_threshold,
+                critical_threshold=config.alert_critical_threshold,
+            )
+            self.notifications.configure(policy)
         self.log_generated.emit(
-            f"Configured monitor: interface={config.interface or 'all'}, window={config.window_seconds}s, trigger={config.trigger_threshold}"
+            "Configured monitor: interface="
+            f"{config.interface or 'all'}, window={config.window_seconds}s, "
+            f"detect>={config.detection_threshold}, high>={config.high_severity_threshold}, "
+            f"alert warn>={config.alert_warning_threshold}, critical>={config.alert_critical_threshold}"
         )
 
     def start(self) -> None:
@@ -69,32 +90,52 @@ class ARPMonitor(QObject):
         if not packet.haslayer(ARP):
             return
         parsed = PacketParser.parse(packet)
-        self.metrics.record_packet()
-        self.packet_processed.emit(parsed)
-        detection = self.decision.process(parsed)
+        self.process_parsed_packet(parsed)
+
+    def process_parsed_packet(self, packet: ParsedARPPacket) -> None:
+        snapshot = self.resources.sample()
+        self.metrics.record_packet(packet, snapshot)
+        self.packet_processed.emit(packet)
+        detection = self.decision.process(packet)
+        detected = detection is not None
+        self.metrics.evaluate_detection(packet.is_attack, detected)
         if detection:
             self.metrics.record_incident(
                 IncidentRecord(
-                    timestamp=parsed.timestamp,
+                    timestamp=packet.timestamp,
                     summary=detection.reason,
                     severity=detection.severity,
-                    ip_address=parsed.sender_ip,
-                    mac_address=parsed.sender_mac,
+                    ip_address=packet.sender_ip,
+                    mac_address=packet.sender_mac,
                     occurrences=detection.occurrences,
                 )
             )
             self.incident_detected.emit(detection)
             message = (
-                f"[{detection.severity.upper()}] {parsed.sender_ip} -> {parsed.target_ip} | {detection.reason}"
+                f"[{detection.severity.upper()}] {packet.sender_ip} -> {packet.target_ip} | {detection.reason}"
             )
             self.logger.log(message)
             self.log_generated.emit(message)
+            if self.notifications:
+                self.notifications.notify(detection)
+
+    def ingest_simulated_packet(self, packet: ParsedARPPacket) -> None:
+        """Allow injection of synthetic packets for evaluation scenarios."""
+
+        self.process_parsed_packet(packet)
 
     def reset(self) -> None:
         self.cache = BindingCache()
         self.logger.clear()
         self.metrics = Metrics()
-        self.thresholds = ThresholdEvaluator()
         self.rules = RuleMatchingModule(self.cache)
-        self.decision = DecisionLogic(self.cache, self.rules, self.thresholds)
+        if self._config:
+            self.configure(self._config)
+        else:
+            self.thresholds = ThresholdEvaluator()
+            self.decision = DecisionLogic(self.cache, self.rules, self.thresholds)
+            self.resources = ResourceMonitor()
         self.log_generated.emit("Monitor state reset")
+
+    def set_notification_manager(self, manager: Optional[NotificationManager]) -> None:
+        self.notifications = manager

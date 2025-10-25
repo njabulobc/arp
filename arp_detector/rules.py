@@ -42,9 +42,17 @@ class RuleMatchingModule:
 class ThresholdEvaluator:
     """Aggregates rule matches and applies temporal thresholds."""
 
-    def __init__(self, window_seconds: int = 120, trigger: int = 3) -> None:
+    def __init__(
+        self,
+        window_seconds: int = 120,
+        detection_trigger: int = 3,
+        high_trigger: Optional[int] = None,
+        medium_trigger: int = 1,
+    ) -> None:
         self.window = timedelta(seconds=window_seconds)
-        self.trigger = trigger
+        self.detection_trigger = detection_trigger
+        self.high_trigger = high_trigger or detection_trigger
+        self.medium_trigger = medium_trigger
         self._events: Dict[str, List[datetime]] = {}
 
     def register(self, key: str, timestamp: datetime) -> int:
@@ -54,13 +62,15 @@ class ThresholdEvaluator:
         self._events[key] = [ts for ts in occurrences if timestamp - ts <= self.window]
         return len(self._events[key])
 
-    def exceeds_threshold(self, key: str) -> bool:
-        timestamps = self._events.get(key)
-        if not timestamps:
-            return False
-        now = datetime.utcnow()
-        timestamps[:] = [ts for ts in timestamps if now - ts <= self.window]
-        return len(timestamps) >= self.trigger
+    def severity_for(self, occurrences: int) -> str:
+        if occurrences >= self.high_trigger:
+            return "high"
+        if occurrences >= self.medium_trigger:
+            return "medium"
+        return "low"
+
+    def meets_detection_threshold(self, occurrences: int) -> bool:
+        return occurrences >= self.detection_trigger
 
 
 class DecisionLogic:
@@ -79,7 +89,10 @@ class DecisionLogic:
 
         key = packet.sender_ip
         occurrences = self.thresholds.register(key, packet.timestamp)
-        severity = "high" if self.thresholds.exceeds_threshold(key) else "medium"
+        if not self.thresholds.meets_detection_threshold(occurrences):
+            return None
+
+        severity = self.thresholds.severity_for(occurrences)
         reason = "; ".join(reasons)
 
         return DetectionEvent(

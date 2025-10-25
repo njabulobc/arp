@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from scapy.layers.l2 import ARP
 from scapy.packet import Packet
@@ -20,6 +20,8 @@ class ParsedARPPacket:
     target_mac: str
     timestamp: datetime
     raw: Dict[str, Any]
+    is_attack: Optional[bool] = None
+    label: Optional[str] = None
 
 
 class PacketParser:
