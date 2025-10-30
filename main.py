@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
 )
 
 from arp_detector.mitigation import MitigationAction, MitigationEngine
-from arp_detector.monitor import ARPMonitor, MonitorConfig
+from arp_detector.monitor import ARPMonitor, MonitorConfig, MonitorConfigurationError
 from arp_detector.notifications import NotificationManager, NotificationPolicy, create_callback_channel
 from arp_detector.reporting import ReportGenerator
 from arp_detector.rules import DetectionEvent
@@ -226,17 +226,61 @@ class MainWindow(QMainWindow):
             self._append_log(recommendation)
             return recommendation
 
-        self.mitigation.register_action(MitigationAction("Simulated Mitigation", fake_mitigation))
+        def _precheck_reason(event: DetectionEvent) -> tuple[bool, str]:
+            return (bool(event.reason), "Detection reason verified")
+
+        def _postcheck_log(event: DetectionEvent, outcome: str) -> tuple[bool, str]:
+            self.monitor.logger.log(
+                "Mitigation outcome recorded",
+                payload={
+                    "ip": event.packet.sender_ip,
+                    "mac": event.packet.sender_mac,
+                    "action": "simulation",
+                    "outcome": outcome,
+                },
+                level="info",
+            )
+            return True, "Outcome logged"
+
+        def _nac_integration(event: DetectionEvent, outcome: str) -> None:
+            self.monitor.logger.log(
+                "Triggered NAC integration",
+                payload={
+                    "ip": event.packet.sender_ip,
+                    "mac": event.packet.sender_mac,
+                    "summary": outcome,
+                },
+                level="medium",
+            )
+
+        self.mitigation.register_action(
+            MitigationAction(
+                action_id="simulate",
+                description="Simulated Mitigation",
+                handler=fake_mitigation,
+                required_roles=("operator",),
+                pre_checks=(_precheck_reason,),
+                post_verifications=(_postcheck_log,),
+                integration_handler=_nac_integration,
+                integration_targets=("nac-platform",),
+            )
+        )
         self.mitigation.register_shell_command(
+            "flush_suspect",
             "Flush suspect ARP entry",
             ["arp", "-d", "{src_ip}"],
+            required_roles=("network-admin", "operator"),
+            pre_checks=(_precheck_reason,),
+            post_verifications=(_postcheck_log,),
+            integration_handler=_nac_integration,
+            integration_targets=("switch-automation",),
         )
         self._refresh_mitigation_actions()
 
     def _register_notifications(self) -> None:
         self.notification_manager.clear_channels()
 
-        def _popup(event: DetectionEvent, level: str, message: str) -> None:
+        def _popup(event: DetectionEvent, level: str, message: str, structured: dict[str, object]) -> None:
             QMessageBox.warning(self, f"ARP {level.title()} Alert", message)
 
         self.notification_manager.register_channel(
@@ -269,7 +313,11 @@ class MainWindow(QMainWindow):
             alert_warning_threshold=warning_alert,
             alert_critical_threshold=critical_alert,
         )
-        self.monitor.configure(config)
+        try:
+            self.monitor.configure(config)
+        except MonitorConfigurationError as exc:
+            QMessageBox.critical(self, "Configuration Error", str(exc))
+            return
         self.notification_manager.configure(
             NotificationPolicy(
                 warning_threshold=warning_alert,
@@ -317,14 +365,22 @@ class MainWindow(QMainWindow):
         event = self.incident_table.selected_event()
         if not event:
             return
-        action = self.mitigation_action_combo.currentText()
-        result = self.mitigation.mitigate(event, action)
+        action_id = self.mitigation_action_combo.currentData()
+        if action_id is None:
+            action_id = self.mitigation_action_combo.currentText()
+        result = self.mitigation.mitigate(
+            event,
+            action_id,
+            actor="ui-operator",
+            role="operator",
+            approvals=("network-admin",),
+        )
         QMessageBox.information(self, "Mitigation", result)
 
     def _refresh_mitigation_actions(self) -> None:
         self.mitigation_action_combo.clear()
         for action in self.mitigation.available_actions():
-            self.mitigation_action_combo.addItem(action.description)
+            self.mitigation_action_combo.addItem(action.description, userData=action.action_id)
 
     def _update_metrics_labels(self) -> None:
         metrics = self.monitor.metrics

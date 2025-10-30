@@ -1,6 +1,7 @@
 """Notification management for ARP detector alerts."""
 from __future__ import annotations
 
+import json
 import logging
 import smtplib
 from dataclasses import dataclass
@@ -37,11 +38,17 @@ class NotificationChannel:
 
     name: str
     minimum_level: str
-    dispatcher: Callable[[DetectionEvent, str, str], None]
+    dispatcher: Callable[[DetectionEvent, str, str, dict[str, object]], None]
 
-    def notify(self, event: DetectionEvent, level: str, message: str) -> None:
+    def notify(
+        self,
+        event: DetectionEvent,
+        level: str,
+        message: str,
+        structured: dict[str, object],
+    ) -> None:
         if _level_priority(level) >= _level_priority(self.minimum_level):
-            self.dispatcher(event, level, message)
+            self.dispatcher(event, level, message, structured)
 
 
 class NotificationManager:
@@ -60,19 +67,23 @@ class NotificationManager:
     def clear_channels(self) -> None:
         self._channels.clear()
 
-    def notify(self, event: DetectionEvent) -> None:
-        if not self._channels:
-            return
+    def has_channels(self) -> bool:
+        return bool(self._channels)
 
+    def notify(self, event: DetectionEvent) -> dict[str, object]:
         level = self._determine_level(event)
-        message = (
-            f"[{level.upper()}] ARP alert for {event.packet.sender_ip} -> {event.packet.target_ip}: {event.reason}"
-        )
+        structured = build_structured_event(event, level)
+        message = structured["summary"]
+
+        if not self._channels:
+            return structured
+
         for channel in self._channels:
             try:
-                channel.notify(event, level, message)
+                channel.notify(event, level, message, structured)
             except Exception:  # pragma: no cover - defensive logging path
                 logger.exception("Notification channel '%s' failed", channel.name)
+        return structured
 
     def _determine_level(self, event: DetectionEvent) -> str:
         if event.occurrences >= self.policy.critical_threshold or event.severity == "high":
@@ -92,7 +103,12 @@ def create_email_channel(
 ) -> NotificationChannel:
     """Create an SMTP-backed notification channel."""
 
-    def _send_email(event: DetectionEvent, level: str, message: str) -> None:
+    def _send_email(
+        event: DetectionEvent,
+        level: str,
+        message: str,
+        structured: dict[str, object],
+    ) -> None:
         email = EmailMessage()
         email["From"] = sender
         email["To"] = ", ".join(recipients)
@@ -111,6 +127,7 @@ def create_email_channel(
                 ]
             )
         )
+        email.add_alternative(json.dumps(structured, indent=2), subtype="json")
         with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as client:
             client.send_message(email)
 
@@ -120,8 +137,33 @@ def create_email_channel(
 def create_callback_channel(
     name: str,
     minimum_level: str,
-    callback: Callable[[DetectionEvent, str, str], None],
+    callback: Callable[[DetectionEvent, str, str, dict[str, object]], None],
 ) -> NotificationChannel:
     """Create a callback-driven channel (e.g., GUI pop-up or logging)."""
 
     return NotificationChannel(name=name, minimum_level=minimum_level, dispatcher=callback)
+
+
+def build_structured_event(event: DetectionEvent, level: str) -> dict[str, object]:
+    """Return a structured payload for downstream systems."""
+
+    packet = event.packet
+    return {
+        "event": "arp_detection",
+        "level": level,
+        "severity": event.severity,
+        "summary": (
+            f"ARP alert for {packet.sender_ip} -> {packet.target_ip}: {event.reason}"
+        ),
+        "reason": event.reason,
+        "occurrences": event.occurrences,
+        "source": {
+            "ip": packet.sender_ip,
+            "mac": packet.sender_mac,
+        },
+        "target": {
+            "ip": packet.target_ip,
+            "mac": packet.target_mac,
+        },
+        "timestamp": packet.timestamp.isoformat(),
+    }

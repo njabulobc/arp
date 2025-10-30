@@ -22,7 +22,9 @@ class ReportGenerator:
             "events": [
                 {
                     "timestamp": entry.timestamp.isoformat(),
+                    "level": entry.level,
                     "message": entry.message,
+                    "payload": entry.payload or {},
                 }
                 for entry in self.logger.entries()
             ],

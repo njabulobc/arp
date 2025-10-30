@@ -58,6 +58,18 @@ class Metrics:
         self.suspicious_packets += 1
         self.incidents.append(incident)
 
+    def reset(self) -> None:
+        """Return all counters to their initial state."""
+
+        self.total_packets = 0
+        self.suspicious_packets = 0
+        self.incidents.clear()
+        self.true_positive = 0
+        self.false_positive = 0
+        self.true_negative = 0
+        self.false_negative = 0
+        self._resource_samples.clear()
+
     def evaluate_detection(self, is_attack: Optional[bool], detected: bool) -> None:
         """Update effectiveness counters when ground truth is available."""
 
